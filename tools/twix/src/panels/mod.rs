@@ -10,6 +10,7 @@ mod map;
 mod parameter;
 mod plot;
 mod remote;
+mod scribble_camera_calibration;
 mod text;
 mod vision_tuner;
 
@@ -25,5 +26,6 @@ pub use map::MapPanel;
 pub use parameter::ParameterPanel;
 pub use plot::PlotPanel;
 pub use remote::RemotePanel;
+pub use scribble_camera_calibration::ScribbleCalibrationPanel;
 pub use text::TextPanel;
 pub use vision_tuner::VisionTunerPanel;
