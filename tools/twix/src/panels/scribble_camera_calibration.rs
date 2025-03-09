@@ -1,52 +1,89 @@
 use std::sync::Arc;
 
-// use communication::messages::TextOrBinary;
-// use eframe::egui::{Response, Slider, Ui, Widget, WidgetText};
+use color_eyre::{eyre::eyre, Result};
+use coordinate_systems::Pixel;
 use eframe::egui::{
-    emath,
-    epaint::{self, CubicBezierShape, PathShape, QuadraticBezierShape},
-    pos2, Color32, Context, Frame, Grid, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind,
-    Ui, Vec2, Widget, Window,
+    emath, epaint::PathShape, pos2, Color32, ColorImage, Pos2, Rect, Response, Sense, Shape,
+    Stroke, TextureOptions, Ui, UiBuilder, Vec2, Widget,
 };
-// use log::error;
+use geometry::rectangle::Rectangle;
+use image::RgbImage;
+use linear_algebra::{point, vector};
 use nalgebra::Vector3;
-// use parameters::directory::Scope;
 use serde_json::Value;
 
-use crate::{log_error::LogError, nao::Nao, panel::Panel, value_buffer::BufferHandle};
+use types::{jpeg::JpegImage, ycbcr422_image::YCbCr422Image};
+
+use crate::{
+    nao::Nao,
+    panel::Panel,
+    twix_painter::{Orientation, TwixPainter},
+    value_buffer::BufferHandle,
+};
+
+use super::image::cycler_selector::{VisionCycler, VisionCyclerSelector};
+
+enum RawOrJpeg {
+    Raw(BufferHandle<YCbCr422Image>),
+    Jpeg(BufferHandle<JpegImage>),
+}
 
 pub struct ScribbleCalibrationPanel {
     nao: Arc<Nao>,
-    top_camera: BufferHandle<Vector3<f32>>,
-    bottom_camera: BufferHandle<Vector3<f32>>,
+    _top_camera: BufferHandle<Vector3<f32>>,
+    _bottom_camera: BufferHandle<Vector3<f32>>,
+
+    image_buffer: RawOrJpeg,
+    cycler: VisionCycler,
 
     line_1_goal: bool,
     line_2_penalty_horizontal: bool,
     line_3_penalty_left: bool,
     line_4_penalty_right: bool,
 
-    /// The control points. The [`Self::degree`] first of them are used.
     lines: [(Pos2, Pos2); 4],
-
-    /// Stroke for Bézier curve.
     stroke: Stroke,
 }
 
 impl Panel for ScribbleCalibrationPanel {
     const NAME: &'static str = "Scribble Calibration";
 
-    fn new(nao: Arc<Nao>, _value: Option<&Value>) -> Self {
-        let top_camera = nao.subscribe_value(
+    fn new(nao: Arc<Nao>, value: Option<&Value>) -> Self {
+        let _top_camera = nao.subscribe_value(
             "parameters.camera_matrix_parameters.vision_top.extrinsic_rotations".to_string(),
         );
-        let bottom_camera = nao.subscribe_value(
+        let _bottom_camera = nao.subscribe_value(
             "parameters.camera_matrix_parameters.vision_bottom.extrinsic_rotations".to_string(),
         );
 
+        let cycler = value
+            .and_then(|value| {
+                let string = value.get("cycler")?.as_str()?;
+                VisionCycler::try_from(string).ok()
+            })
+            .unwrap_or(VisionCycler::Top);
+        let cycler_path = cycler.as_path();
+
+        let is_jpeg = value
+            .and_then(|value| value.get("is_jpeg"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+
+        let image_buffer = if is_jpeg {
+            let path = format!("{cycler_path}.main_outputs.image.jpeg");
+            RawOrJpeg::Jpeg(nao.subscribe_value(path))
+        } else {
+            let path = format!("{cycler_path}.main_outputs.image");
+            RawOrJpeg::Raw(nao.subscribe_value(path))
+        };
+
         Self {
             nao,
-            top_camera,
-            bottom_camera,
+            _top_camera,
+            _bottom_camera,
+
+            image_buffer,
+            cycler,
 
             line_1_goal: true,
             line_2_penalty_horizontal: true,
@@ -66,6 +103,11 @@ impl Panel for ScribbleCalibrationPanel {
 
 impl Widget for &mut ScribbleCalibrationPanel {
     fn ui(self, ui: &mut Ui) -> Response {
+        let jpeg = matches!(self.image_buffer, RawOrJpeg::Jpeg(_));
+        let mut cycler_selector = VisionCyclerSelector::new(&mut self.cycler);
+        if cycler_selector.ui(ui).changed() {
+            self.resubscribe(jpeg);
+        }
         ui.vertical(|ui| {
             ui.collapsing("Lines", |ui| {
                 ui.vertical(|ui| {
@@ -98,13 +140,95 @@ impl ScribbleCalibrationPanel {
         }
     }
 
+    // TODO: implement this only once
+    fn resubscribe(&mut self, jpeg: bool) {
+        let cycler_path = self.cycler.as_path();
+        self.image_buffer = if jpeg {
+            RawOrJpeg::Jpeg(
+                self.nao
+                    .subscribe_value(format!("{cycler_path}.main_outputs.image.jpeg")),
+            )
+        } else {
+            RawOrJpeg::Raw(
+                self.nao
+                    .subscribe_value(format!("{cycler_path}.main_outputs.image")),
+            )
+        };
+    }
+
+    fn show_image(&self, painter: &TwixPainter<Pixel>) -> Result<Rect> {
+        let context = painter.context();
+
+        let image_identifier = format!("bytes://image-{:?}", self.cycler);
+        let (image, width, height) = match &self.image_buffer {
+            RawOrJpeg::Raw(buffer) => {
+                let ycbcr = buffer
+                    .get_last_value()?
+                    .ok_or_else(|| eyre!("no image available"))?;
+                let width = ycbcr.width() as usize;
+                let height = ycbcr.height() as usize;
+                let image = ColorImage::from_rgb([width, height], RgbImage::from(ycbcr).as_raw());
+                (image, width, height)
+            }
+            RawOrJpeg::Jpeg(buffer) => {
+                let jpeg = buffer
+                    .get_last_value()?
+                    .ok_or_else(|| eyre!("no image available"))?;
+                let width = jpeg.width()? as usize;
+                let height = jpeg.height()? as usize;
+                let image = ColorImage::from_rgb([width, height], jpeg.data.as_slice());
+                (image, width, height)
+            }
+        };
+
+        let texture_id = context.load_texture(
+            &image_identifier,
+            image,
+            TextureOptions::NEAREST,
+        );
+
+        let image_rect = Rect {
+            min: pos2(0.0, 0.0),
+            max: pos2(width as f32, height as f32),
+        };
+
+        painter.image(
+            texture_id.id(),
+            Rectangle {
+                min: point!(0.0, 0.0),
+                max: point!(640.0, 480.0),
+            },
+        );
+        Ok(image_rect)
+    }
+
     pub fn ui_content(&mut self, ui: &mut Ui) -> Response {
-        let (response, painter) =
-            ui.allocate_painter(Vec2::new(ui.available_width(), 300.0), Sense::hover());
+        let (response, mut painter) = TwixPainter::allocate(
+            ui,
+            vector![640.0, 480.0],
+            point![0.0, 0.0],
+            Orientation::LeftHanded,
+        );
+
+        let image_rect = match self.show_image(&painter) {
+            Ok(rect) => rect,
+            Err(error) => {
+                ui.scope_builder(UiBuilder::new().max_rect(response.rect), |ui| {
+                    ui.label(format!("{error}"))
+                });
+                return response;
+            }
+        };
+
+        if let Err(error) = self.show_image(&painter) {
+            ui.scope_builder(UiBuilder::new().max_rect(response.rect), |ui| {
+                ui.label(format!("{error}"))
+            });
+        };
 
         let to_screen = emath::RectTransform::from_to(
-            Rect::from_min_size(Pos2::ZERO, response.rect.size()),
-            response.rect,
+            Rect::from_min_size(Pos2::ZERO, image_rect.size()),
+            image_rect,
         );
 
         let line_states: Vec<bool> = (0..self.lines.len()).map(|i| self.int_to_bool(i)).collect();
@@ -143,10 +267,10 @@ impl ScribbleCalibrationPanel {
                     // Update the line with the new positions
                     let updated_start_screen = to_screen * *start;
                     let updated_end_screen = to_screen * *end;
-                    painter.add(PathShape::line(
+                    painter.add(Shape::Path(PathShape::line(
                         vec![updated_start_screen, updated_end_screen],
                         self.stroke,
-                    ));
+                    )));
                 }
             });
 

@@ -8,6 +8,18 @@ pub struct JpegImage {
     pub data: Vec<u8>,
 }
 
+impl JpegImage {
+    pub fn width(&self) -> Result<u32, ImageError> {
+        let img = image::load_from_memory(&self.data)?;
+        Ok(img.width())
+    }
+
+    pub fn height(&self) -> Result<u32, ImageError> {
+        let img = image::load_from_memory(&self.data)?;
+        Ok(img.height())
+    }
+}
+
 impl TryFrom<&GrayscaleImage> for JpegImage {
     type Error = ImageError;
 
