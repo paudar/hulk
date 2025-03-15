@@ -409,7 +409,12 @@
       },
       "step_midpoint": 0.5,
       "torso_offset": 0.0,
-      "torso_tilt": 0.055,
+      "torso_tilt_base": 0.055,
+      "torso_tilt": {
+        "forward": 0.0,
+        "left": 0.0,
+        "turn": 0.05
+      },
       "walk_height": 0.23
     },
     "catching_steps": {
@@ -740,7 +745,7 @@
       }
     },
     "line_length_acceptance_factor": 1.5,
-    "line_measurement_noise": [1000.0, 320.0],
+    "line_measurement_noise": [750.0, 320.0],
     "maximum_amount_of_gradient_descent_iterations": 20,
     "maximum_amount_of_outer_iterations": 10,
     "minimum_fit_error": 0.001,
