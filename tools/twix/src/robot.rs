@@ -18,6 +18,7 @@ use ros_z::{
         SetNodeParameterResponse,
     },
     pubsub::Received,
+    qos::{QosDurability, QosProfile},
     time::Time,
 };
 use serde_json::Value;
@@ -195,10 +196,23 @@ impl Robot {
         self.subscribe_buffered_json(topic, Duration::ZERO)
     }
 
+    pub fn subscribe_transient_local_json(&self, topic: impl Into<String>) -> BufferHandle<Value> {
+        self.subscribe_buffered_json_with_qos(topic, Duration::ZERO, transient_local_qos())
+    }
+
     pub fn subscribe_buffered_json(
         &self,
         topic: impl Into<String>,
         history: Duration,
+    ) -> BufferHandle<Value> {
+        self.subscribe_buffered_json_with_qos(topic, history, QosProfile::default())
+    }
+
+    fn subscribe_buffered_json_with_qos(
+        &self,
+        topic: impl Into<String>,
+        history: Duration,
+        qos: QosProfile,
     ) -> BufferHandle<Value> {
         let topic = topic.into();
         let (buffer, handle) = Buffer::new(history);
@@ -206,7 +220,7 @@ impl Robot {
         let callbacks = self.callbacks.clone();
 
         self.runtime.spawn(async move {
-            subscribe_dynamic_json_loop(topic, buffer, &mut backend_rx, callbacks).await;
+            subscribe_dynamic_json_loop(topic, buffer, qos, &mut backend_rx, callbacks).await;
         });
 
         handle
@@ -493,6 +507,7 @@ async fn subscribe_typed_loop<T>(
 async fn subscribe_dynamic_json_loop(
     topic: String,
     buffer: Buffer<Value, color_eyre::Report>,
+    qos: QosProfile,
     backend_rx: &mut watch::Receiver<Option<Arc<ConnectedBackend>>>,
     callbacks: Arc<Mutex<Vec<ChangeCallback>>>,
 ) {
@@ -552,7 +567,7 @@ async fn subscribe_dynamic_json_loop(
             }
         };
         let subscriber_result = tokio::select! {
-            subscriber = builder.build() => {
+            subscriber = builder.qos(qos).build() => {
                 subscriber.map_err(|error| BackendError::Operation {
                     operation: "dynamic.subscribe",
                     message: error.to_string(),
@@ -640,6 +655,13 @@ async fn subscribe_dynamic_json_loop(
                 }
             }
         }
+    }
+}
+
+fn transient_local_qos() -> QosProfile {
+    QosProfile {
+        durability: QosDurability::TransientLocal,
+        ..Default::default()
     }
 }
 
