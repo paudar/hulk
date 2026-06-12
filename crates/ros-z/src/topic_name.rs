@@ -40,9 +40,6 @@ fn is_valid_topic_component(component: &str) -> bool {
         return false;
     }
     let bytes = component.as_bytes();
-    if !bytes[0].is_ascii_alphabetic() && bytes[0] != b'_' {
-        return false;
-    }
     bytes[1..]
         .iter()
         .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
