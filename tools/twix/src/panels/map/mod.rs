@@ -24,8 +24,10 @@ mod layers;
 
 const FIELD_DIMENSIONS_TOPIC_NAME: &str = "field_dimensions";
 const GROUND_TO_FIELD_TOPIC_NAME: &str = "ground_to_field";
+const LINE_DATA_TOPIC_NAME: &str = "line_data";
 const DEFAULT_FIELD_DIMENSIONS_TOPIC: &str = "/field_dimensions";
 const DEFAULT_GROUND_TO_FIELD_TOPIC: &str = "/ground_to_field";
+const DEFAULT_LINE_DATA_TOPIC: &str = "/line_data";
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 enum PlotType {
@@ -252,6 +254,9 @@ impl<'a> Panel<'a> for MapPanel {
 
 impl Widget for &mut MapPanel {
     fn ui(self, ui: &mut Ui) -> eframe::egui::Response {
+        let topics = self.robot.topic_list_state();
+        self.update_topics_from_discovery(&topics);
+
         ui.horizontal(|ui| {
             ui.menu_button("Overlays", |ui| {
                 self.field.checkbox(ui);
@@ -279,9 +284,6 @@ impl Widget for &mut MapPanel {
                     ui.selectable_value(&mut self.current_plot_type, PlotType::Field, "Field");
                 });
         });
-
-        let topics = self.robot.topic_list_state();
-        self.update_topics_from_discovery(&topics);
 
         ui.horizontal(|ui| {
             ui.label("Field dimensions");
@@ -416,6 +418,7 @@ impl MapPanel {
             topics,
             &endpoint,
         );
+        self.lines.update_topics_from_discovery(topics, &endpoint);
     }
 }
 
