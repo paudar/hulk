@@ -1,0 +1,9 @@
+{
+  enabled: true,
+  save_interval: {
+    nanos: 0,
+    secs: 2,
+  },
+  output_directory: "/tmp/hulk-image-saver",
+  maximum_saved_images: 300,
+}

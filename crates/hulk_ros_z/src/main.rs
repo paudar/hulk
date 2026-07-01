@@ -126,6 +126,7 @@ async fn spawn_all(ctx: Arc<Context>) -> Result<RunningStack> {
     join_set.spawn(ground_provider::run_boxed(ctx.clone()));
     join_set.spawn(head_motion::run_boxed(ctx.clone()));
     join_set.spawn(image_receiver::run_boxed(ctx.clone()));
+    join_set.spawn(image_saver::run_boxed(ctx.clone()));
     join_set.spawn(image_segmenter::run_boxed(ctx.clone()));
     join_set.spawn(kinematics_provider::run_boxed(ctx.clone()));
     join_set.spawn(led_handler::run_boxed(ctx.clone()));

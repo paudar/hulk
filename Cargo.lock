@@ -5485,6 +5485,7 @@ dependencies = [
  "ground_provider",
  "head_motion",
  "image_receiver",
+ "image_saver",
  "image_segmenter",
  "kinematics_provider",
  "led_handler",
@@ -5818,6 +5819,19 @@ dependencies = [
  "tokio",
  "types",
  "x5_receiver",
+]
+
+[[package]]
+name = "image_saver"
+version = "0.1.0"
+dependencies = [
+ "color-eyre",
+ "ros-z",
+ "ros2",
+ "serde",
+ "tokio",
+ "tracing",
+ "types",
 ]
 
 [[package]]

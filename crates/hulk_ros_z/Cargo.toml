@@ -29,6 +29,7 @@ global_parameter_provider = { workspace = true }
 ground_provider = { workspace = true }
 head_motion = { workspace = true }
 image_receiver = { workspace = true }
+image_saver = { workspace = true }
 image_segmenter = { workspace = true }
 kinematics_provider = { workspace = true }
 led_handler = { workspace = true }
