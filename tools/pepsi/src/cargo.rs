@@ -109,7 +109,7 @@ pub async fn construct_cargo_command<CargoArguments: Args + CargoCommand>(
     };
     let environment = match arguments.environment.env {
         Some(environment) => environment,
-        None => read_requested_environment(&manifest_path)
+        None => read_requested_environment(&manifest_path, CargoArguments::SUB_COMMAND)
             .await
             .wrap_err("failed to read requested environment")?,
     }
@@ -147,9 +147,20 @@ pub async fn construct_cargo_command<CargoArguments: Args + CargoCommand>(
     Ok(cargo_command)
 }
 
-async fn read_requested_environment(manifest_path: &Option<PathBuf>) -> Result<Environment> {
+async fn read_requested_environment(
+    manifest_path: &Option<PathBuf>,
+    cargo_subcommand: &str,
+) -> Result<Environment> {
     let Some(manifest_path) = manifest_path else {
-        return Ok(Environment::Native);
+        return Ok(
+            if cargo_subcommand == "clippy"
+                && cfg!(all(target_os = "macos", target_arch = "aarch64"))
+            {
+                sdk_environment_for_host()
+            } else {
+                Environment::Native
+            },
+        );
     };
 
     let manifest = read_to_string(manifest_path).await.wrap_err_with(|| {
@@ -172,10 +183,14 @@ async fn read_requested_environment(manifest_path: &Option<PathBuf>) -> Result<E
         return Ok(Environment::Native);
     }
 
-    Ok(match ContainerRuntime::default_for_host() {
+    Ok(sdk_environment_for_host())
+}
+
+fn sdk_environment_for_host() -> Environment {
+    match ContainerRuntime::default_for_host() {
         ContainerRuntime::Podman => Environment::Podman { image: None },
         ContainerRuntime::Docker => Environment::Docker { image: None },
-    })
+    }
 }
 
 async fn resolve_manifest_path(
