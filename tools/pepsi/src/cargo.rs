@@ -13,7 +13,7 @@ use color_eyre::{
 use environment::{Environment, EnvironmentArguments};
 use lazy_static::lazy_static;
 use pathdiff::diff_paths;
-use repository::{Repository, cargo::Cargo};
+use repository::{Repository, cargo::Cargo, sdk::ContainerRuntime};
 use tokio::fs::read_to_string;
 use toml::Table;
 use tracing::debug;
@@ -172,7 +172,10 @@ async fn read_requested_environment(manifest_path: &Option<PathBuf>) -> Result<E
         return Ok(Environment::Native);
     }
 
-    Ok(Environment::Podman { image: None })
+    Ok(match ContainerRuntime::default_for_host() {
+        ContainerRuntime::Podman => Environment::Podman { image: None },
+        ContainerRuntime::Docker => Environment::Docker { image: None },
+    })
 }
 
 async fn resolve_manifest_path(
