@@ -223,4 +223,8 @@ impl CargoCommand for Arguments {
     fn profile(&self) -> &str {
         self.common.profile.as_deref().unwrap_or("test")
     }
+
+    fn selected_packages(&self) -> &[String] {
+        &self.packages
+    }
 }

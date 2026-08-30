@@ -14,7 +14,8 @@ use environment::{Environment, EnvironmentArguments};
 use lazy_static::lazy_static;
 use pathdiff::diff_paths;
 use repository::{Repository, cargo::Cargo, sdk::ContainerRuntime};
-use tokio::fs::read_to_string;
+use serde::Deserialize;
+use tokio::{fs::read_to_string, process::Command};
 use toml::Table;
 use tracing::debug;
 
@@ -64,6 +65,10 @@ pub trait CargoCommand {
 
     fn apply(&self, cmd: &mut Cargo);
     fn profile(&self) -> &str;
+
+    fn selected_packages(&self) -> &[String] {
+        &[]
+    }
 }
 
 pub async fn cargo<CargoArguments: Args + CargoCommand>(
@@ -109,9 +114,14 @@ pub async fn construct_cargo_command<CargoArguments: Args + CargoCommand>(
     };
     let environment = match arguments.environment.env {
         Some(environment) => environment,
-        None => read_requested_environment(&manifest_path, CargoArguments::SUB_COMMAND)
-            .await
-            .wrap_err("failed to read requested environment")?,
+        None => read_requested_environment(
+            &manifest_path,
+            CargoArguments::SUB_COMMAND,
+            arguments.cargo.selected_packages(),
+            repository,
+        )
+        .await
+        .wrap_err("failed to read requested environment")?,
     }
     .resolve(repository)
     .await
@@ -150,40 +160,115 @@ pub async fn construct_cargo_command<CargoArguments: Args + CargoCommand>(
 async fn read_requested_environment(
     manifest_path: &Option<PathBuf>,
     cargo_subcommand: &str,
+    selected_packages: &[String],
+    repository: &Repository,
 ) -> Result<Environment> {
-    let Some(manifest_path) = manifest_path else {
+    if let Some(manifest_path) = manifest_path {
+        let manifest = read_to_string(manifest_path).await.wrap_err_with(|| {
+            format!(
+                "failed to read manifest at {path}",
+                path = manifest_path.display()
+            )
+        })?;
+        let manifest: Table = toml::from_str(&manifest).wrap_err("failed to parse manifest")?;
+
+        if manifest_requests_cross_compile(&manifest) {
+            return Ok(sdk_environment_for_host());
+        }
+
+        if !selected_packages.is_empty() {
+            return Ok(
+                if selected_packages_request_cross_compile(selected_packages, repository).await? {
+                    sdk_environment_for_host()
+                } else {
+                    Environment::Native
+                },
+            );
+        }
+
+        if manifest.get("package").is_none()
+            && manifest.get("workspace").is_some()
+            && workspace_command_uses_sdk(cargo_subcommand)
+        {
+            return Ok(sdk_environment_for_host());
+        }
+
+        return Ok(Environment::Native);
+    }
+
+    if !selected_packages.is_empty() {
         return Ok(
-            if cargo_subcommand == "clippy"
-                && cfg!(all(target_os = "macos", target_arch = "aarch64"))
-            {
+            if selected_packages_request_cross_compile(selected_packages, repository).await? {
                 sdk_environment_for_host()
             } else {
                 Environment::Native
             },
         );
-    };
-
-    let manifest = read_to_string(manifest_path).await.wrap_err_with(|| {
-        format!(
-            "failed to read manifest at {path}",
-            path = manifest_path.display()
-        )
-    })?;
-    let manifest: Table = toml::from_str(&manifest).wrap_err("failed to parse manifest")?;
-    let Some(package_metadata) = package_metadata(&manifest) else {
-        return Ok(Environment::Native);
-    };
-
-    let is_cross_compile_requested = package_metadata
-        .get("cross-compile")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-
-    if !is_cross_compile_requested {
-        return Ok(Environment::Native);
     }
 
-    Ok(sdk_environment_for_host())
+    Ok(if workspace_command_uses_sdk(cargo_subcommand) {
+        sdk_environment_for_host()
+    } else {
+        Environment::Native
+    })
+}
+
+fn manifest_requests_cross_compile(manifest: &Table) -> bool {
+    package_metadata(manifest)
+        .and_then(|metadata| metadata.get("cross-compile"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn workspace_command_uses_sdk(cargo_subcommand: &str) -> bool {
+    cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        && matches!(
+            cargo_subcommand,
+            "build" | "check" | "clippy" | "nextest run" | "test"
+        )
+}
+
+#[derive(Deserialize)]
+struct CargoMetadata {
+    packages: Vec<CargoMetadataPackage>,
+}
+
+#[derive(Deserialize)]
+struct CargoMetadataPackage {
+    name: String,
+    metadata: serde_json::Value,
+}
+
+async fn selected_packages_request_cross_compile(
+    selected_packages: &[String],
+    repository: &Repository,
+) -> Result<bool> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(&repository.root)
+        .output()
+        .await
+        .wrap_err("failed to read Cargo workspace metadata")?;
+    if !output.status.success() {
+        bail!(
+            "cargo metadata failed with {status}: {stderr}",
+            status = output.status,
+            stderr = String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)
+        .wrap_err("failed to parse Cargo workspace metadata")?;
+
+    Ok(metadata.packages.iter().any(|package| {
+        selected_packages.contains(&package.name)
+            && package
+                .metadata
+                .get("pepsi")
+                .and_then(|metadata| metadata.get("cross-compile"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+    }))
 }
 
 fn sdk_environment_for_host() -> Environment {
