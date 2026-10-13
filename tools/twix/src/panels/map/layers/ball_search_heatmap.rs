@@ -1,8 +1,7 @@
-use color_eyre::Result;
+use color_eyre::{Result, eyre::ensure};
 use coordinate_systems::Field;
 use eframe::epaint::Color32;
 use linear_algebra::point;
-use ndarray::{ArrayView2, Axis};
 use ros_z_debug::{SampleRecord, TopicObservation};
 use std::sync::Arc;
 use types::{field_dimensions::FieldDimensions, heatmap::Heatmap};
@@ -41,16 +40,27 @@ impl Layer<Field> for BallSearchHeatmap {
         let Some(SampleRecord { value: heatmap, .. }) = latest_sample.as_deref() else {
             return Ok(());
         };
-        let heatmap = ArrayView2::from_shape(
-            (heatmap.length as usize, heatmap.width as usize),
-            &heatmap.values,
-        )?;
+        let length = heatmap.length as usize;
+        let width = heatmap.width as usize;
+        ensure!(length > 0 && width > 0, "heatmap dimensions are empty");
+        ensure!(
+            length.checked_mul(width) == Some(heatmap.values.len()),
+            "heatmap dimensions do not match its number of values"
+        );
+
         let offset = (field_dimensions.length / 2.0, field_dimensions.width / 2.0);
-        // search_heatmap uses one-metre cells, ordered by field x then field y.
-        for (x, row) in heatmap.axis_iter(Axis(0)).enumerate() {
+        let cell_length = field_dimensions.length / length as f32;
+        let cell_width = field_dimensions.width / width as f32;
+        for (x, row) in heatmap.values.chunks_exact(width).enumerate() {
             for (y, value) in row.iter().enumerate() {
-                let first_point = point![x as f32 - offset.0, y as f32 - offset.1,];
-                let second_point = point![(x + 1) as f32 - offset.0, (y + 1) as f32 - offset.1,];
+                let first_point = point![
+                    x as f32 * cell_length - offset.0,
+                    y as f32 * cell_width - offset.1,
+                ];
+                let second_point = point![
+                    (x + 1) as f32 * cell_length - offset.0,
+                    (y + 1) as f32 * cell_width - offset.1,
+                ];
                 const HEATMAP_OPACITY_SCALE: f32 = 3.0;
                 painter.rect_filled(
                     first_point,
@@ -104,7 +114,7 @@ mod tests {
             .await
             .unwrap();
         // The producer stores x as the outer dimension and y as the inner one.
-        // Fractional field dimensions must not shrink its one-metre cells.
+        // The search heatmap uses half-metre cells, ordered by field x then field y.
         let heatmap = Heatmap {
             length: 3,
             width: 2,
@@ -131,9 +141,9 @@ mod tests {
                 .paint(
                     &painter,
                     &FieldDimensions {
-                        length: 2.5,
-                        width: 1.5,
-                        ..FieldDimensions::SPL_2025
+                        length: 1.5,
+                        width: 1.0,
+                        ..Default::default()
                     },
                 )
                 .unwrap();
@@ -151,15 +161,15 @@ mod tests {
             .collect();
         assert_eq!(cells.len(), 6);
         for (index, cell) in cells.iter().enumerate() {
-            let x = (index / 2) as f32 - 1.25;
-            let y = (index % 2) as f32 - 0.75;
+            let x = (index / 2) as f32 * 0.5 - 0.75;
+            let y = (index % 2) as f32 * 0.5 - 0.5;
             assert_eq!(
                 cell.points,
                 [
                     pos2(x, y),
-                    pos2(x + 1.0, y),
-                    pos2(x + 1.0, y + 1.0),
-                    pos2(x, y + 1.0)
+                    pos2(x + 0.5, y),
+                    pos2(x + 0.5, y + 0.5),
+                    pos2(x, y + 0.5)
                 ]
             );
         }
