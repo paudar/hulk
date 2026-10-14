@@ -42,7 +42,10 @@ use types::{
 };
 use voronoi::VoronoiGrid;
 
-use crate::{motion_assembler::assemble_motion_command, tree::create_tree};
+use crate::{
+    motion_assembler::assemble_motion_command, send_message::state_message_send_interval,
+    tree::create_tree,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Message)]
 pub struct LastBall {
@@ -323,7 +326,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         .build()
         .await?;
     let hsl_state_message_send_interval_pub = node
-        .publisher::<Duration>("hsl_state_message_send_interval")
+        .publisher::<Option<Duration>>("hsl_state_message_send_interval")
         .qos(QosProfile {
             durability: QosDurability::TransientLocal,
             history: QosHistory::KeepLast(NonZeroUsize::MIN),
@@ -405,6 +408,9 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
     };
 
     let mut published_state_message_send_interval = None;
+    hsl_state_message_send_interval_pub
+        .publish(&published_state_message_send_interval)
+        .await?;
     let mut published_goalkeeper_player_number = blackboard.parameters.goalkeeper.player_number;
     goalkeeper_player_number_pub
         .publish(&published_goalkeeper_player_number)
@@ -441,22 +447,6 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             && limits.validate().is_ok()
         {
             blackboard.walking_velocity_limits = *limits;
-        }
-        let state_message_send_interval = filtered_game_controller_state_cache
-            .get_latest()
-            .and_then(|state| {
-                super::send_message::state_message_send_interval(
-                    &state,
-                    &blackboard.parameters.network,
-                )
-            });
-        if let Some(interval) = state_message_send_interval
-            && Some(interval) != published_state_message_send_interval
-        {
-            hsl_state_message_send_interval_pub
-                .publish(&interval)
-                .await?;
-            published_state_message_send_interval = Some(interval);
         }
         let goalkeeper_player_number = blackboard.parameters.goalkeeper.player_number;
         if goalkeeper_player_number != published_goalkeeper_player_number {
@@ -517,6 +507,17 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
             filtered_game_controller_state_cache.get_latest().map(
                 |filtered_game_controller_state| filtered_game_controller_state.as_ref().clone(),
             );
+        let send_interval = blackboard
+            .world_state
+            .filtered_game_controller_state
+            .as_ref()
+            .and_then(|state| state_message_send_interval(state, &blackboard.parameters.network));
+        if send_interval != published_state_message_send_interval {
+            hsl_state_message_send_interval_pub
+                .publish(&send_interval)
+                .await?;
+            published_state_message_send_interval = send_interval;
+        }
         blackboard.world_state.hypothetical_ball_positions = hypothetical_ball_positions_cache
             .get_latest()
             .map(|positions| positions.as_ref().clone())
