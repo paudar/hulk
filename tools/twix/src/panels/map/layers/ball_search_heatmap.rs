@@ -114,7 +114,7 @@ mod tests {
             .await
             .unwrap();
         // The producer stores x as the outer dimension and y as the inner one.
-        // The search heatmap uses half-metre cells, ordered by field x then field y.
+        // Rectangular cells must cover the complete field in x-then-y order.
         let heatmap = Heatmap {
             length: 3,
             width: 2,
@@ -141,9 +141,9 @@ mod tests {
                 .paint(
                     &painter,
                     &FieldDimensions {
-                        length: 1.5,
+                        length: 2.25,
                         width: 1.0,
-                        ..Default::default()
+                        ..FieldDimensions::SPL_2025
                     },
                 )
                 .unwrap();
@@ -161,14 +161,14 @@ mod tests {
             .collect();
         assert_eq!(cells.len(), 6);
         for (index, cell) in cells.iter().enumerate() {
-            let x = (index / 2) as f32 * 0.5 - 0.75;
+            let x = (index / 2) as f32 * 0.75 - 1.125;
             let y = (index % 2) as f32 * 0.5 - 0.5;
             assert_eq!(
                 cell.points,
                 [
                     pos2(x, y),
-                    pos2(x + 0.5, y),
-                    pos2(x + 0.5, y + 0.5),
+                    pos2(x + 0.75, y),
+                    pos2(x + 0.75, y + 0.5),
                     pos2(x, y + 0.5)
                 ]
             );
