@@ -180,6 +180,14 @@ mod tests {
 
     use super::*;
 
+    fn player_state() -> PlayerState {
+        PlayerState {
+            pose: Pose2::default(),
+            head_yaw: 0.0,
+            ball_position: None,
+        }
+    }
+
     #[test]
     fn state_message_updates_player_with_receive_time() {
         let mut states = Players::new(None);
@@ -256,17 +264,11 @@ mod tests {
         let mut states = Players::new(None);
         states[PlayerNumber::Two] = Some(TimeWrapper {
             time: Time::from_nanos(10),
-            inner: PlayerState {
-                pose: Pose2::default(),
-                ball_position: None,
-            },
+            inner: player_state(),
         });
         states[PlayerNumber::Three] = Some(TimeWrapper {
             time: Time::from_nanos(20),
-            inner: PlayerState {
-                pose: Pose2::default(),
-                ball_position: None,
-            },
+            inner: player_state(),
         });
 
         let game_controller_state = FilteredGameControllerState {
@@ -300,17 +302,11 @@ mod tests {
         let mut states = Players::new(None);
         states[PlayerNumber::Two] = Some(TimeWrapper {
             time: Time::from_nanos(1_000_000_000),
-            inner: PlayerState {
-                pose: Pose2::default(),
-                ball_position: None,
-            },
+            inner: player_state(),
         });
         states[PlayerNumber::Three] = Some(TimeWrapper {
             time: Time::from_nanos(1_500_000_000),
-            inner: PlayerState {
-                pose: Pose2::default(),
-                ball_position: None,
-            },
+            inner: player_state(),
         });
 
         let removed_any = clear_old_player_states(
@@ -329,10 +325,7 @@ mod tests {
         let mut states = Players::new(None);
         states[PlayerNumber::Two] = Some(TimeWrapper {
             time: Time::from_nanos(1_000_000_001),
-            inner: PlayerState {
-                pose: Pose2::default(),
-                ball_position: None,
-            },
+            inner: player_state(),
         });
 
         let removed_any = clear_old_player_states(
@@ -350,7 +343,7 @@ mod tests {
         let mut last_received = Players::new(None);
         last_received[PlayerNumber::Two] = Some(TimeWrapper {
             time: Time::from_nanos(1_000_000_000),
-            inner: PlayerState::default(),
+            inner: player_state(),
         });
 
         let active = age_limited_player_states(
